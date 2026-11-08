@@ -148,6 +148,63 @@ def idealdata_bin_oku(yol: str) -> Veri:
     return Veri(z, f("o"), f("h"), f("l"), f("c"))
 
 
+def excel_oku(yol: str) -> Veri:
+    """IdealData'dan Excel'e aktarılmış veri: Tarih | Saat | Açılış | Yüksek | Düşük | Kapanış | ..."""
+    import openpyxl
+    from datetime import date, time as dtime
+    wb = openpyxl.load_workbook(yol, read_only=True, data_only=True)
+    ws = wb.worksheets[0]
+    satirlar = ws.iter_rows(values_only=True)
+    norm = lambda x: str(x or "").strip().lower().translate(str.maketrans("çğıöşüâ", "cgiosua"))
+    sutun = None
+    for r in satirlar:
+        b = [norm(x) for x in r]
+        if "tarih" in b and any(x.startswith("acilis") for x in b):
+            sutun = {k: next(i for i, x in enumerate(b) if x.startswith(k))
+                     for k in ("tarih", "acilis", "yuksek", "dusuk", "kapanis")}
+            sutun["saat"] = b.index("saat") if "saat" in b else None
+            break
+    if sutun is None:
+        raise ValueError("Başlık satırı bulunamadı (Tarih, Açılış, Yüksek, Düşük, Kapanış)")
+
+    def sayi(x):
+        return float(x) if isinstance(x, (int, float)) else _sayi(str(x))
+
+    zaman, O, H, L, C = [], [], [], [], []
+    fmt: list = []
+    for r in satirlar:
+        try:
+            t = r[sutun["tarih"]]
+            if t is None:
+                continue
+            s_ = r[sutun["saat"]] if sutun["saat"] is not None else None
+            if isinstance(t, datetime):
+                d = t
+            elif isinstance(t, date):
+                d = datetime(t.year, t.month, t.day)
+            else:
+                d = _tarih_saat(str(t).strip(), None, fmt)
+            if isinstance(s_, dtime):
+                d = d.replace(hour=s_.hour, minute=s_.minute)
+            elif isinstance(s_, datetime):
+                d = d.replace(hour=s_.hour, minute=s_.minute)
+            elif s_ not in (None, ""):
+                hh, mm = str(s_).strip().split(":")[:2]
+                d = d.replace(hour=int(hh), minute=int(mm))
+            o, h, l, c = (sayi(r[sutun[k]]) for k in ("acilis", "yuksek", "dusuk", "kapanis"))
+        except (ValueError, TypeError, IndexError):
+            continue
+        zaman.append(d); O.append(o); H.append(h); L.append(l); C.append(c)
+    if len(C) < 100:
+        raise ValueError(f"Yeterli bar okunamadı ({len(C)})")
+    z = np.array(zaman, dtype="datetime64[m]")
+    sira = np.argsort(z, kind="stable")
+    v = Veri(z[sira], np.array(O)[sira], np.array(H)[sira], np.array(L)[sira], np.array(C)[sira])
+    v.H = np.maximum.reduce([v.H, v.O, v.C])
+    v.L = np.minimum.reduce([v.L, v.O, v.C])
+    return v
+
+
 def _ikili_mi(yol: str) -> bool:
     with open(yol, "rb") as f:
         return b"\x00" in f.read(4096)
@@ -161,6 +218,8 @@ def veri_oku(yol: str) -> Veri:
         TarihSaat;Açılış;Yüksek;Düşük;Kapanış[;Hacim...]
         Sembol;Periyot;Tarih;Saat;Açılış;Yüksek;Düşük;Kapanış[...]   (öndeki metin sütunları atlanır)
     """
+    if yol.lower().endswith((".xlsx", ".xlsm")):
+        return excel_oku(yol)
     if _ikili_mi(yol):
         return idealdata_bin_oku(yol)
     with open(yol, "r", encoding="utf-8-sig", errors="replace") as f:

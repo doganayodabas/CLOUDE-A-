@@ -80,6 +80,9 @@ IMKBH = BIST pay piyasası, A1CAP = sembol, 05 = 5 dakika). Dışa aktarmaya ger
 klasöründeki dosyayı vermek yeterli. Dosya yapısı: bar başına 32 bayt (zaman, açılış, yüksek,
 düşük, kapanış, lot, TL hacim). Tarih kodu: `gün = (yıl−1990)×384 + (ay−1)×32 + gün`.
 
+IdealData'dan Excel'e aktarılmış `.xlsx` dosyası da olur (Tarih, Saat, Açılış, Yüksek, Düşük,
+Kapanış sütunları; ondalık virgüllü metin hücreleri sorun değil).
+
 Metin dosyası da olur: `Tarih;Saat;Açılış;Yüksek;Düşük;Kapanış;...` veya `TarihSaat;Açılış;...`
 düzenleri, `; , tab` ayraçları ve ondalık virgül otomatik tanınır.
 Veri yoksa `ORNEK` yazarak sentetik veriyle deneyebilirsiniz (`python sistem.py test ORNEK`).
