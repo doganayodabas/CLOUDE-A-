@@ -1,5 +1,7 @@
 # İndirim ve Mağaza Fiyat — Python sürümü
 
+> Ödeme / çek / banka / personel hatırlatıcısı için: [hatirlatici/BENIOKU.md](hatirlatici/BENIOKU.md)
+
 `INDIRIM_VE_MAGAZA_FIYAT` Excel'indeki ~710.000 formülün yerine geçen tek dosyalık program.
 Aynı ham verilerle Excel'in ürettiği sonuçların aynısını üretir (06.11.2026 verisiyle 1569 ürünün
 oranı ve fiyatı tek tek karşılaştırıldı). Hesap birkaç saniye sürer.
