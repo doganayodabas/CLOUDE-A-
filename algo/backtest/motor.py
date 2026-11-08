@@ -66,6 +66,8 @@ VARSAYILAN = {
     "GUNLUK_MAX_ZARAR_YUZDE": 2.0,
     "KOMISYON_YUZDE": 0.02,   # tek yön
     "KAYMA_YUZDE": 0.02,      # tek yön
+    "KAYMA_TICK": 0.0,        # tek yön, fiyat adımı cinsinden ek kayma (BIST hisse adım tablosu)
+    "YON": 0,                 # 0 = çift yön, 1 = sadece long, -1 = sadece short
     "KALDIRAC": 1.0,
     "DOLUM": "intrabar",      # "intrabar" (stop/limit seviyesinden) | "kapanis" (IdealData backtest gibi)
 }
@@ -124,6 +126,33 @@ def _tarih_saat(t: str, s: str | None, fmt_cache: list):
     raise ValueError(f"Tarih/saat çözülemedi: {metin!r}")
 
 
+def idealdata_bin_oku(yol: str) -> Veri:
+    """IdealData'nın kendi veri dosyası (ör. IMKBHA1CAP.05: IMKBH piyasası, A1CAP, 5 dk).
+
+    Her bar 32 bayt: uint32 zaman, float32 açılış, yüksek, düşük, kapanış, lot, TL hacim, 4 bayt boş.
+    zaman = gun * 1440 + gunun_dakikasi,  gun = (yil - 1990) * 384 + (ay - 1) * 32 + gun_no
+    (her ay 32, her yıl 384 günlük sabit alana yazılır)
+    """
+    dt_ = np.dtype([("t", "<u4"), ("o", "<f4"), ("h", "<f4"), ("l", "<f4"), ("c", "<f4"),
+                    ("lot", "<f4"), ("hacim", "<f4"), ("bos", "<u4")])
+    a = np.fromfile(yol, dt_)
+    if len(a) < 100:
+        raise ValueError(f"Yeterli bar yok ({len(a)})")
+    t = a["t"].astype(np.int64)
+    g, dk = t // 1440, t % 1440
+    yil, r = 1990 + g // 384, g % 384
+    ay, gn = r // 32 + 1, r % 32
+    tarih = np.array([f"{y:04d}-{m:02d}-{d:02d}" for y, m, d in zip(yil, ay, gn)], dtype="datetime64[D]")
+    z = tarih.astype("datetime64[m]") + dk.astype("timedelta64[m]")
+    f = lambda k: a[k].astype(np.float64)
+    return Veri(z, f("o"), f("h"), f("l"), f("c"))
+
+
+def _ikili_mi(yol: str) -> bool:
+    with open(yol, "rb") as f:
+        return b"\x00" in f.read(4096)
+
+
 def veri_oku(yol: str) -> Veri:
     """IdealData'dan dışa aktarılan txt/csv dosyasını okur.
 
@@ -132,6 +161,8 @@ def veri_oku(yol: str) -> Veri:
         TarihSaat;Açılış;Yüksek;Düşük;Kapanış[;Hacim...]
         Sembol;Periyot;Tarih;Saat;Açılış;Yüksek;Düşük;Kapanış[...]   (öndeki metin sütunları atlanır)
     """
+    if _ikili_mi(yol):
+        return idealdata_bin_oku(yol)
     with open(yol, "r", encoding="utf-8-sig", errors="replace") as f:
         satirlar = [s.strip() for s in f if s.strip()]
     if not satirlar:
@@ -285,6 +316,14 @@ def indikatorler(v: Veri, p: dict) -> dict:
 
 # --------------------------------------------------------------------------- motor
 
+def bist_adim(fiyat: float) -> float:
+    """BIST pay piyasası fiyat adımı."""
+    for sinir, adim in ((20, 0.01), (50, 0.02), (100, 0.05), (250, 0.10), (500, 0.25), (1000, 0.5), (2500, 1.0)):
+        if fiyat < sinir:
+            return adim
+    return 2.5
+
+
 @dataclass
 class Islem:
     yon: int
@@ -318,6 +357,8 @@ def calistir(v: Veri, parametre: dict | None = None, ind: dict | None = None) ->
     ssdd = (dk // 60) * 100 + dk % 60
     intrabar = p["DOLUM"] == "intrabar"
     maliyet = 2 * (p["KOMISYON_YUZDE"] + p["KAYMA_YUZDE"])
+    kayma_tick = p["KAYMA_TICK"]
+    yon_izin = int(p["YON"])
     kal = p["KALDIRAC"]
     mod = int(p["MOD"])
     isinma = max(p["EMA_YAVAS"], p["ADX_P"] * 3, p["DONCHIAN"], p["ER_P"]) + 2
@@ -336,7 +377,8 @@ def calistir(v: Veri, parametre: dict | None = None, ind: dict | None = None) ->
 
     def kapat(i, fiyat, neden):
         nonlocal pos, acik, kum, gun_zarar
-        g = pos * (fiyat - giris) / giris * 100 * kal - maliyet * kal
+        m = maliyet + (2 * kayma_tick * bist_adim(giris) / giris * 100 if kayma_tick else 0.0)
+        g = pos * (fiyat - giris) / giris * 100 * kal - m * kal
         acik.cikis_zaman, acik.cikis, acik.neden, acik.bar, acik.getiri = v.zaman[i], fiyat, neden, bar_say, g
         islemler.append(acik)
         kum += g
@@ -452,6 +494,8 @@ def calistir(v: Veri, parametre: dict | None = None, ind: dict | None = None) ->
                     geri = H[i] >= ef[i] > C[i] and C[i] < O[i]
                     if kirilim or geri:
                         yon = -1
+                if yon and yon_izin and yon != yon_izin:
+                    yon = 0
                 if yon:
                     pos = yon
                     giris = C[i]
@@ -498,6 +542,12 @@ def istatistik(islemler: list, ozk: np.ndarray, v: Veri) -> dict:
     nedenler: dict = {}
     for t in islemler:
         nedenler[t.neden] = nedenler.get(t.neden, 0) + 1
+    donem = {}
+    if islemler:
+        son = v.zaman[-1]
+        for ad, ay in (("1ay", 1), ("3ay", 3), ("6ay", 6), ("1yil", 12)):
+            bas = son - np.timedelta64(int(ay * 30.44 * 1440), "m")
+            donem[ad] = float(sum(t.getiri for t in islemler if t.cikis_zaman >= bas))
     gunler = (v.zaman[-1] - v.zaman[0]).astype("timedelta64[D]").astype(int) if len(v) else 0
     return {
         "islem": int(len(g)),
@@ -514,5 +564,8 @@ def istatistik(islemler: list, ozk: np.ndarray, v: Veri) -> dict:
         "long": int(sum(1 for t in islemler if t.yon == 1)),
         "short": int(sum(1 for t in islemler if t.yon == -1)),
         "takvim_gun": int(gunler),
+        "islem_ay": float(len(g) / max(gunler / 30.44, 1e-9)) if gunler else 0.0,
+        "ort_puan": float(g.mean()) if len(g) else 0.0,
+        **{f"getiri_{k}": x for k, x in donem.items()},
         "cikis_nedenleri": nedenler,
     }

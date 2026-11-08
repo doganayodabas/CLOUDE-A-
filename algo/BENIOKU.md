@@ -75,7 +75,12 @@ python sistem.py test XU030_5dk.txt --json sonuc/en_iyi_parametre.json
 - `optimizasyon.csv`: denenen tüm adaylar, İÇ ve DIŞ dönem sonuçları yan yana
 - `en_iyi_parametre.json`
 
-Veri dosyası: `Tarih;Saat;Açılış;Yüksek;Düşük;Kapanış;...` veya `TarihSaat;Açılış;...`
+Veri dosyası: IdealData'nın **kendi veri dosyaları doğrudan okunur** (ör. `IMKBHA1CAP.05`:
+IMKBH = BIST pay piyasası, A1CAP = sembol, 05 = 5 dakika). Dışa aktarmaya gerek yok; IdealData
+klasöründeki dosyayı vermek yeterli. Dosya yapısı: bar başına 32 bayt (zaman, açılış, yüksek,
+düşük, kapanış, lot, TL hacim). Tarih kodu: `gün = (yıl−1990)×384 + (ay−1)×32 + gün`.
+
+Metin dosyası da olur: `Tarih;Saat;Açılış;Yüksek;Düşük;Kapanış;...` veya `TarihSaat;Açılış;...`
 düzenleri, `; , tab` ayraçları ve ondalık virgül otomatik tanınır.
 Veri yoksa `ORNEK` yazarak sentetik veriyle deneyebilirsiniz (`python sistem.py test ORNEK`).
 Sentetik verinin sonuçları gerçek piyasayı **yansıtmaz**.
@@ -108,6 +113,8 @@ adaylardan yapın. İç dönemde parlayıp dış dönemde bozulan aday aşırı 
 | GUN_SONU_KAPAT | 1 | Gece pozisyon taşıma |
 | GUNLUK_MAX_ZARAR_YUZDE | 2.0 | Gün içi zarar limiti |
 | KOMISYON_YUZDE / KAYMA_YUZDE | 0.02 / 0.02 | Tek yön maliyet (yalnız Python) |
+| YON | 0 | 0 çift yön, 1 sadece long (spot hisse, açığa satış yoksa), -1 sadece short |
+| KAYMA_TICK | 0 | Tek yön kayma, fiyat adımı cinsinden (BIST adım tablosu; yalnız Python). Düşük fiyatlı hissede 1 adım %0,3–0,7 olabilir |
 | KALDIRAC | 1 | Getiri çarpanı (yalnız Python) |
 | DOLUM | intrabar | `intrabar` veya `kapanis` (yalnız Python) |
 

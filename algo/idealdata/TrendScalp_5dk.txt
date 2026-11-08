@@ -16,6 +16,7 @@
 
 // ---------------- PARAMETRELER ----------------
 int    MOD            = 3;      // 1 = Scalp, 2 = Trend, 3 = Hibrit
+int    YON            = 0;      // 0 = çift yön, 1 = sadece long (spot hisse), -1 = sadece short
 int    EMA_HIZLI      = 9;
 int    EMA_YAVAS      = 34;
 int    ATR_P          = 14;
@@ -231,6 +232,7 @@ for (int i = 1; i < n; i++)
                 if (kirilim || geri) yon = -1;
             }
         }
+        if (YON != 0 && yon != YON) yon = 0;
         if (yon != 0)
         {
             pos = yon; giris = C[i]; ekstrem = giris; tp1Gor = false; barSay = 0;
