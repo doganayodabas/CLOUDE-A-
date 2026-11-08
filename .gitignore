@@ -2,3 +2,4 @@ CIKTI_*.xlsx
 ORNEK_CIKTI_*.xlsx
 __pycache__/
 *.zip
+algo/backtest/sonuc/

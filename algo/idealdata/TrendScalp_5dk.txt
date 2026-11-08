@@ -1,0 +1,236 @@
+// =====================================================================================
+//  TREND + SCALP HİBRİT SİSTEM  —  5 dakikalık, çift yönlü (Long / Short)
+//  IdealData Sistem Editörü için. Mantık, algo/backtest/motor.py ile birebir aynıdır.
+//
+//  - Yatayda işlemsiz : ADX ve Kaufman Verimlilik Oranı (ER) filtresi
+//  - Giriş            : EMA yönü + (Donchian kırılımı  VEYA  hızlı EMA'ya geri çekilme)
+//  - Düşük MaxDD      : ATR stop, kâr kilidi (breakeven+), izleyen stop, günlük zarar limiti
+//  - Yüksek isabet    : TP1'de scalp kârı (MOD 1) veya TP1'de stopu kâra çekme (MOD 3)
+//  - İğne barda kâr   : IGNE_TP_ATR seviyesine değen fitilde kâr al, uzun fitil bırakan barda çık
+//  - Gap koruması     : gün sonu kapat, aleyhe gapte çık, açılışta / gapli günde bekle
+//
+//  NOT: IdealData backtesti işlemleri bar KAPANIŞINDAN gerçekleştirir. Stop / iğne seviyeleri
+//  bar içindeki Yüksek/Düşük ile kontrol edilir ama dolum kapanıştan hesaplanır. Python
+//  motorunda bunu görmek için:  python sistem.py test veri.txt -p DOLUM=kapanis
+// =====================================================================================
+
+// ---------------- PARAMETRELER ----------------
+int    MOD            = 3;      // 1 = Scalp, 2 = Trend, 3 = Hibrit
+int    EMA_HIZLI      = 9;
+int    EMA_YAVAS      = 34;
+int    ATR_P          = 14;
+int    ADX_P          = 14;
+int    ER_P           = 10;
+int    DONCHIAN       = 20;
+double ADX_MIN        = 20;
+double ER_MIN         = 0.30;
+double STOP_ATR       = 1.5;
+double TP1_ATR        = 1.0;
+double BE_ATR         = 0.2;
+double TRAIL_ATR      = 2.0;
+double TRAIL_YUZDE    = 3.0;
+double IGNE_TP_ATR    = 3.0;
+double IGNE_FITIL_ATR = 1.5;
+double IGNE_GIRIS_ATR = 2.5;
+int    MAX_BAR        = 36;
+double GAP_ATR        = 1.0;
+int    ACILIS_BEKLE   = 2;
+int    GAP_BEKLE      = 6;
+int    SON_GIRIS      = 1730;   // SSDD
+int    GUN_SONU       = 1755;   // SSDD
+bool   GUN_SONU_KAPAT = true;
+double GUNLUK_MAX_ZARAR_YUZDE = 2.0;
+double MALIYET_YUZDE  = 0.08;   // gidiş-dönüş komisyon + kayma (günlük zarar takibi için)
+
+// ---------------- VERİ ----------------
+var O = Sistem.GrafikFiyatSec("Acilis");
+var H = Sistem.GrafikFiyatSec("Yuksek");
+var L = Sistem.GrafikFiyatSec("Dusuk");
+var C = Sistem.GrafikFiyatSec("Kapanis");
+int n = Sistem.BarSayisi;
+
+// ---------------- İNDİKATÖRLER (platform fonksiyonlarına bağımlı kalmamak için elle) ----------------
+double[] ef  = new double[n];
+double[] es  = new double[n];
+double[] atr = new double[n];
+double[] pdi = new double[n];
+double[] mdi = new double[n];
+double[] adx = new double[n];
+double[] er  = new double[n];
+double[] dh  = new double[n];
+double[] dl  = new double[n];
+
+double af = 2.0 / (EMA_HIZLI + 1), asl = 2.0 / (EMA_YAVAS + 1);
+double trs = 0, pdms = 0, mdms = 0;
+ef[0] = C[0]; es[0] = C[0]; atr[0] = H[0] - L[0]; trs = atr[0];
+for (int i = 1; i < n; i++)
+{
+    ef[i] = ef[i-1] + af  * (C[i] - ef[i-1]);
+    es[i] = es[i-1] + asl * (C[i] - es[i-1]);
+
+    double tr = Math.Max(H[i] - L[i], Math.Max(Math.Abs(H[i] - C[i-1]), Math.Abs(L[i] - C[i-1])));
+    atr[i] = atr[i-1] + (tr - atr[i-1]) / ATR_P;
+
+    double up = H[i] - H[i-1], dn = L[i-1] - L[i];
+    double pdm = (up > dn && up > 0) ? up : 0;
+    double mdm = (dn > up && dn > 0) ? dn : 0;
+    trs  = trs  + (tr  - trs)  / ADX_P;
+    pdms = pdms + (pdm - pdms) / ADX_P;
+    mdms = mdms + (mdm - mdms) / ADX_P;
+    pdi[i] = trs > 0 ? 100 * pdms / trs : 0;
+    mdi[i] = trs > 0 ? 100 * mdms / trs : 0;
+    double dx = (pdi[i] + mdi[i]) > 0 ? 100 * Math.Abs(pdi[i] - mdi[i]) / (pdi[i] + mdi[i]) : 0;
+    adx[i] = adx[i-1] + (dx - adx[i-1]) / ADX_P;
+
+    if (i >= ER_P)
+    {
+        double gurultu = 0;
+        for (int k = i - ER_P + 1; k <= i; k++) gurultu += Math.Abs(C[k] - C[k-1]);
+        er[i] = gurultu > 0 ? Math.Abs(C[i] - C[i-ER_P]) / gurultu : 0;
+    }
+
+    dh[i] = H[i]; dl[i] = L[i];
+    for (int k = Math.Max(0, i - DONCHIAN + 1); k < i; k++)
+    {
+        if (H[k] > dh[i]) dh[i] = H[k];
+        if (L[k] < dl[i]) dl[i] = L[k];
+    }
+}
+
+// ---------------- SİSTEM DÖNGÜSÜ ----------------
+int isinma = Math.Max(Math.Max(EMA_YAVAS, ADX_P * 3), Math.Max(DONCHIAN, ER_P)) + 2;
+int pos = 0, barSay = 0, gunBar = 0, bekle = ACILIS_BEKLE;
+double giris = 0, stop = 0, tp1 = 0, igne = 0, ekstrem = 0, gunZarar = 0;
+bool tp1Gor = false;
+string SonYon = "";
+
+for (int i = 1; i < n; i++)
+{
+    DateTime t = Sistem.Tarih[i];
+    int ssdd = t.Hour * 100 + t.Minute;
+    bool yeniGun = t.Date != Sistem.Tarih[i-1].Date;
+    if (yeniGun)
+    {
+        gunBar = 0; gunZarar = 0;
+        bekle = Math.Abs(O[i] - C[i-1]) >= GAP_ATR * atr[i-1] ? GAP_BEKLE : ACILIS_BEKLE;
+    }
+    else gunBar++;
+
+    string Sinyal = "";
+    string cikisNeden = "";
+
+    // ======== Açık pozisyon yönetimi ========
+    if (pos != 0)
+    {
+        barSay++;
+        // 1) Gap koruması
+        if (yeniGun)
+        {
+            bool aleyhe = pos * (O[i] - C[i-1]) < 0;
+            if (GUN_SONU_KAPAT) cikisNeden = "gun_sonu";
+            else if ((aleyhe && Math.Abs(O[i] - C[i-1]) >= GAP_ATR * atr[i-1]) || pos * (O[i] - stop) <= 0) cikisNeden = "gap";
+        }
+        // 2) Bar içi stop / iğne kâr al / scalp hedefi
+        if (cikisNeden == "")
+        {
+            if (pos == 1)
+            {
+                if (L[i] <= stop) cikisNeden = "stop";
+                else if (H[i] >= igne) cikisNeden = "igne_tp";
+                else if (MOD == 1 && H[i] >= tp1) cikisNeden = "tp1";
+            }
+            else
+            {
+                if (H[i] >= stop) cikisNeden = "stop";
+                else if (L[i] <= igne) cikisNeden = "igne_tp";
+                else if (MOD == 1 && L[i] <= tp1) cikisNeden = "tp1";
+            }
+        }
+        // 3) Kâr kilidi ve izleyen stop
+        if (cikisNeden == "")
+        {
+            if (pos == 1)
+            {
+                ekstrem = Math.Max(ekstrem, H[i]);
+                if (!tp1Gor && MOD != 1 && H[i] >= tp1)
+                {
+                    tp1Gor = true;
+                    if (MOD == 3) stop = Math.Max(stop, giris + BE_ATR * atr[i]);
+                }
+                if (MOD == 2 || (MOD == 3 && tp1Gor))
+                    stop = Math.Max(stop, Math.Max(ekstrem - TRAIL_ATR * atr[i], ekstrem * (1 - TRAIL_YUZDE / 100)));
+                if (C[i] <= stop) cikisNeden = "izleyen";
+            }
+            else
+            {
+                ekstrem = Math.Min(ekstrem, L[i]);
+                if (!tp1Gor && MOD != 1 && L[i] <= tp1)
+                {
+                    tp1Gor = true;
+                    if (MOD == 3) stop = Math.Min(stop, giris - BE_ATR * atr[i]);
+                }
+                if (MOD == 2 || (MOD == 3 && tp1Gor))
+                    stop = Math.Min(stop, Math.Min(ekstrem + TRAIL_ATR * atr[i], ekstrem * (1 + TRAIL_YUZDE / 100)));
+                if (C[i] >= stop) cikisNeden = "izleyen";
+            }
+        }
+        // 4) Kapanış bazlı çıkışlar: iğne fitili, gün sonu, zaman stopu, ters kesişim
+        if (cikisNeden == "")
+        {
+            double govde = Math.Abs(C[i] - O[i]);
+            double fitil = pos == 1 ? H[i] - Math.Max(O[i], C[i]) : Math.Min(O[i], C[i]) - L[i];
+            bool karda   = pos == 1 ? C[i] > giris : C[i] < giris;
+            bool ters    = pos == 1 ? ef[i] < es[i] : ef[i] > es[i];
+            if (karda && fitil >= IGNE_FITIL_ATR * atr[i] && fitil >= 2 * govde) cikisNeden = "fitil";
+            else if (GUN_SONU_KAPAT && ssdd >= GUN_SONU) cikisNeden = "gun_sonu";
+            else if (!tp1Gor && barSay >= MAX_BAR) cikisNeden = "zaman";
+            else if (ters) cikisNeden = "ters";
+        }
+
+        if (cikisNeden != "")
+        {
+            gunZarar += pos * (C[i] - giris) / giris * 100 - MALIYET_YUZDE;
+            pos = 0;
+            Sinyal = "F";
+        }
+    }
+
+    // ======== Giriş ========
+    bool stoplandi = cikisNeden == "stop" || cikisNeden == "izleyen" || cikisNeden == "gap";
+    if (pos == 0 && i >= isinma && !stoplandi)
+    {
+        bool izin = gunBar >= bekle && ssdd <= SON_GIRIS && gunZarar > -GUNLUK_MAX_ZARAR_YUZDE
+                    && adx[i] >= ADX_MIN && er[i] >= ER_MIN
+                    && (H[i] - L[i]) <= IGNE_GIRIS_ATR * atr[i] && atr[i] > 0;
+        int yon = 0;
+        if (izin)
+        {
+            if (ef[i] > es[i] && es[i] > es[i-1] && pdi[i] > mdi[i])
+            {
+                bool kirilim = C[i] > dh[i-1];
+                bool geri    = L[i] <= ef[i] && ef[i] < C[i] && C[i] > O[i];
+                if (kirilim || geri) yon = 1;
+            }
+            else if (ef[i] < es[i] && es[i] < es[i-1] && mdi[i] > pdi[i])
+            {
+                bool kirilim = C[i] < dl[i-1];
+                bool geri    = H[i] >= ef[i] && ef[i] > C[i] && C[i] < O[i];
+                if (kirilim || geri) yon = -1;
+            }
+        }
+        if (yon != 0)
+        {
+            pos = yon; giris = C[i]; ekstrem = giris; tp1Gor = false; barSay = 0;
+            stop = giris - yon * STOP_ATR    * atr[i];
+            tp1  = giris + yon * TP1_ATR     * atr[i];
+            igne = giris + yon * IGNE_TP_ATR * atr[i];
+            Sinyal = yon == 1 ? "A" : "S";
+        }
+    }
+
+    if (Sinyal != "" && Sinyal != SonYon)
+    {
+        Sistem.Yon[i] = Sinyal;
+        SonYon = Sinyal;
+    }
+}
