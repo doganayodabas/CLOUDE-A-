@@ -167,8 +167,37 @@ def excel_oku(yol: str) -> Veri:
     if sutun is None:
         raise ValueError("Başlık satırı bulunamadı (Tarih, Açılış, Yüksek, Düşük, Kapanış)")
 
+    # Excel bazen "95,52448" gibi ondalıklı metni binlik ayraç sanıp 9552448 tam sayısına çevirir.
+    # Rakamlar korunur, yalnızca virgülün yeri kaybolur: önceki sağlam fiyata en yakın 10^-k ile düzelt.
+    ref = [None]
+    duzeltilen = [0]
+
     def sayi(x):
-        return float(x) if isinstance(x, (int, float)) else _sayi(str(x))
+        if isinstance(x, str):
+            d = _sayi(x)
+        else:
+            d = float(x)
+            if ref[0] is not None and d > 0 and not (ref[0] / 3 < d < ref[0] * 3):
+                aday = min((d / 10 ** k for k in range(0, 10)), key=lambda y: abs(math.log(y / ref[0])))
+                if ref[0] / 1.5 < aday < ref[0] * 1.5:
+                    d = aday
+                    duzeltilen[0] += 1
+        return d
+
+    # ilk referans: metin olarak gelmiş ilk kapanış
+    for r in ws.iter_rows(values_only=True):
+        x = r[sutun["kapanis"]] if len(r) > sutun["kapanis"] else None
+        if isinstance(x, str):
+            try:
+                ref[0] = _sayi(x)
+                break
+            except ValueError:
+                pass
+    satirlar = ws.iter_rows(values_only=True)
+    for r in satirlar:
+        b = [norm(x) for x in r]
+        if "tarih" in b:
+            break
 
     zaman, O, H, L, C = [], [], [], [], []
     fmt: list = []
@@ -194,9 +223,12 @@ def excel_oku(yol: str) -> Veri:
             o, h, l, c = (sayi(r[sutun[k]]) for k in ("acilis", "yuksek", "dusuk", "kapanis"))
         except (ValueError, TypeError, IndexError):
             continue
+        ref[0] = c
         zaman.append(d); O.append(o); H.append(h); L.append(l); C.append(c)
     if len(C) < 100:
         raise ValueError(f"Yeterli bar okunamadı ({len(C)})")
+    if duzeltilen[0]:
+        print(f"Bilgi: {duzeltilen[0]} hücrede Excel'in kaydırdığı ondalık virgül düzeltildi.")
     z = np.array(zaman, dtype="datetime64[m]")
     sira = np.argsort(z, kind="stable")
     v = Veri(z[sira], np.array(O)[sira], np.array(H)[sira], np.array(L)[sira], np.array(C)[sira])
