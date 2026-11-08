@@ -43,11 +43,13 @@ double GUNLUK_MAX_ZARAR_YUZDE = 2.0;
 double MALIYET_YUZDE  = 0.08;   // gidiş-dönüş komisyon + kayma (günlük zarar takibi için)
 
 // ---------------- VERİ ----------------
-var O = Sistem.GrafikFiyatSec("Acilis");
-var H = Sistem.GrafikFiyatSec("Yuksek");
-var L = Sistem.GrafikFiyatSec("Dusuk");
-var C = Sistem.GrafikFiyatSec("Kapanis");
-int n = Sistem.BarSayisi;
+// iDeal Sistem Modülü belgesindeki yazım: önce grafik verisi, sonra fiyat listeleri
+var V = Sistem.GrafikVerileri;
+var O = Sistem.GrafikFiyatOku(V, "Acilis");
+var H = Sistem.GrafikFiyatOku(V, "Yuksek");
+var L = Sistem.GrafikFiyatOku(V, "Dusuk");
+var C = Sistem.GrafikFiyatOku(V, "Kapanis");
+int n = V.Count;
 
 // ---------------- İNDİKATÖRLER (platform fonksiyonlarına bağımlı kalmamak için elle) ----------------
 double[] ef  = new double[n];
@@ -97,6 +99,17 @@ for (int i = 1; i < n; i++)
     }
 }
 
+// ---------------- GRAFİK ÇİZGİLERİ (listeler) ----------------
+var EmaHizliCizgi = Sistem.Liste(0);
+var EmaYavasCizgi = Sistem.Liste(0);
+var StopCizgi     = Sistem.Liste(0);
+for (int i = 0; i < n; i++)
+{
+    EmaHizliCizgi[i] = (float)ef[i];
+    EmaYavasCizgi[i] = (float)es[i];
+    StopCizgi[i]     = C[i];
+}
+
 // ---------------- SİSTEM DÖNGÜSÜ ----------------
 int isinma = Math.Max(Math.Max(EMA_YAVAS, ADX_P * 3), Math.Max(DONCHIAN, ER_P)) + 2;
 int pos = 0, barSay = 0, gunBar = 0, bekle = ACILIS_BEKLE;
@@ -106,9 +119,9 @@ string SonYon = "";
 
 for (int i = 1; i < n; i++)
 {
-    DateTime t = Sistem.Tarih[i];
+    DateTime t = V[i].Date;                      // barın tarih + saati
     int ssdd = t.Hour * 100 + t.Minute;
-    bool yeniGun = t.Date != Sistem.Tarih[i-1].Date;
+    bool yeniGun = t.Date != V[i-1].Date.Date;
     if (yeniGun)
     {
         gunBar = 0; gunZarar = 0;
@@ -228,9 +241,16 @@ for (int i = 1; i < n; i++)
         }
     }
 
+    // aktif stop seviyesi grafikte görünsün (pozisyon yokken kapanış)
+    StopCizgi[i] = pos != 0 ? (float)stop : C[i];
+
     if (Sinyal != "" && Sinyal != SonYon)
     {
         Sistem.Yon[i] = Sinyal;
         SonYon = Sinyal;
     }
 }
+
+Sistem.Cizgiler[0].Deger = EmaHizliCizgi;
+Sistem.Cizgiler[1].Deger = EmaYavasCizgi;
+Sistem.Cizgiler[2].Deger = StopCizgi;

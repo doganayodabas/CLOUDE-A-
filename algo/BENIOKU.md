@@ -33,10 +33,13 @@ barında (Python açık pozisyonu veri sonunda kapatıyor).
 4. `SON_GIRIS` / `GUN_SONU` saatlerini enstrümanın seansına göre ayarlayın (SSDD biçiminde, ör. 1755).
    VİOP akşam seansında işlem yapacaksanız bu saatleri ona göre değiştirin.
 
-> Kod, platformun hazır indikatör fonksiyonlarına bağımlı kalmasın diye EMA/ATR/ADX/ER'yi
-> kendisi hesaplar. Yalnızca `Sistem.GrafikFiyatSec`, `Sistem.BarSayisi`, `Sistem.Tarih` ve
-> `Sistem.Yon` kullanılır. Sürümünüzde `Sistem.Tarih` farklı çalışıyorsa yalnızca
-> döngünün başındaki iki satırı (`ssdd` ve `yeniGun`) uyarlamanız yeterli.
+> Kod, iDeal "Sistem Modülü" belgesindeki yazım biçimini kullanır: `Sistem.GrafikVerileri`,
+> `Sistem.GrafikFiyatOku(V, "Kapanis")`, `V.Count`, `Sistem.Liste(0)`, `Sistem.Cizgiler[k].Deger`.
+> Bunlara ek olarak sinyal için `Sistem.Yon[i]` ("A" / "S" / "F") ve barın zamanı için `V[i].Date`
+> kullanılır. EMA/ATR/ADX/ER hazır fonksiyonlara bağlı kalmamak için kod içinde hesaplanır.
+> Grafikte 3 çizgi çizilir: hızlı EMA, yavaş EMA ve pozisyondayken aktif stop seviyesi.
+> `V[i].Date` sizin sürümünüzde hata verirse yalnızca döngünün başındaki iki satırı
+> (`t` ve `yeniGun`) `Sistem.Tarih[i]` ile değiştirmeniz yeterli.
 
 **Önemli fark:** IdealData backtesti bütün işlemleri bar kapanışından gerçekleştirir. Bu yüzden
 stop ve iğne seviyeleri bar içinde görülse de dolum kapanış fiyatından olur. İğne kâr al
